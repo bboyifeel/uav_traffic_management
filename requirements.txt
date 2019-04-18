@@ -1,0 +1,6 @@
+decorator==4.3.2
+numpy==1.16.2
+scipy==1.2.1
+networkx==2.2
+multinetx==1.0.dev0
+matplotlib<3.0.0
