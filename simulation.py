@@ -4,15 +4,20 @@ import multinetx as mx
 import matplotlib.pyplot as plt
 import math
 
-# N number of nodes for each node
+# N number of nodes for each layer
 N					= 10
 NUMBER_OF_DRONS 	= 3
-MAX_VELOCITY 		= [15, 25, 35] # $todo: recalculate with the respect of slowering constant
+# MAX_VELOCITY 		= [15, 25, 42]   	km/h 
+MAX_VELOCITY		= [ 4.2, 7, 11.7 ] # m/s
+START_POSITION			= 0
+DESTINATION_POSITION	= 8
+SLOWER 					= [1, 0.8, 0.6]  # slowering constant
+
 
 class UAV(object):
 	# rule:
-	# 		1 - fixed with best time calculated at the beginning
-	#		2 - fixed with best energy calculated at the beginning
+	# 		1 - fixed with best time calculated at the beginning (selfish blunt time)
+	#		2 - fixed with best energy calculated at the beginning (selfish blunt energy)
 	#		3 - optimize energy
 	#		4 - optimize time
 	def __init__(self, sourcePosition, destination, shortPath, rule):
@@ -82,8 +87,6 @@ class UAV(object):
 ####################################################################################
 # Functions for generating traffic, moving and calculating energy, time,
 # hovering/queuing count and layer switching
-
-
 # Generate the list of drones >>> traffic generator
 def generateDrone(graph, number, position, destination):
 	dronesList = []
@@ -95,12 +98,12 @@ def generateDrone(graph, number, position, destination):
 			d = UAV(position, destination, shortPathT, 1)
 		elif rule == 2:
 			d = UAV(position, destination, shortPathE, 2)
+		elif rule == 3:
+			d = UAV(position, destination, shortPathT, 3)
 		else:
-			d = UAV(position, destination, shortPathE, rule)
-		# d = UAV(position, destination, shortPathE, 1)
+			d = UAV(position, destination, shortPathE, 4)
 		dronesList.append(d)
 	return dronesList
-
 
 # Function that defines the movement of the drones given list of instances of the UAV class
 # all drones move at the same time (with this code)
@@ -122,9 +125,7 @@ def droneMove(graph, dronesList):
 		AttributesDistance = nx.get_edge_attributes(graph, 'distance')  # edge distance
 
 		for drone in dronesList:
-			counter += 1
-			slower = [1, 0.8, 0.6]  # slowering constant
-			
+			counter += 1			
 			pos = drone.getPosition()  # present position
 			if (pos == drone.getDestination()):
 				continue
@@ -133,29 +134,29 @@ def droneMove(graph, dronesList):
 			rule = drone.getRule()  # Drone rule
 			
 			shortPath = drone.getShortPath()  # Shortest Path to reach the destination			
-			nUAV = graph.nodes[pos]  # number of UAV [starttime, evapo, number]
+			nUAV = graph.nodes[pos]  	# number of UAV [starttime, evapo, number]
+			
 			# it should only hover, it can't never change its own way.
 			if rule == 1 or rule == 2:
 				index = shortPath.index(pos)
-				move = shortPath[index + 1]
+				nextMove = shortPath[index + 1]
 
-				distance = getAttribute(AttributesDistance, pos, move)
-				capacity = getAttribute(AttributesCapacity, pos, move)  # capacity == critical nUAVs
+				distance = getAttribute(AttributesDistance, pos, nextMove)
+				capacity = getAttribute(AttributesCapacity, pos, nextMove)  # capacity == critical nUAVs
 
-				if len(nUAV[move][2]) <= capacity[0]: s_constant = slower[0]  # drones fly with mVelocity
-				elif capacity[0] < len(nUAV[move][2]) <= capacity[1]: s_constant = slower[1]
-				elif capacity[1] < len(nUAV[move][2]) <= capacity[2]: s_constant = slower[2]
+				if len(nUAV[nextMove][2]) <= capacity[0]: s_constant = SLOWER[0]  # drones fly with mVelocity
+				elif capacity[0] < len(nUAV[nextMove][2]) <= capacity[1]: s_constant = SLOWER[1]
+				elif capacity[1] < len(nUAV[nextMove][2]) <= capacity[2]: s_constant = SLOWER[2]
 				else: s_constant = 0
 
-				vel = getAttribute(AttributesmVelocity, pos, move)
+				vel = getAttribute(AttributesmVelocity, pos, nextMove)
 
 				if s_constant != 0:     # can enter the edge
 					if len(path) < 2:   # first move
-						nUAV[move][0].append(counter * 0.2)
-						nUAV[move][1].append((counter * 0.2) + addPhero(distance, vel * s_constant))
-						nUAV[move][2].append(counter % len(dronesList))
-
-
+						nUAV[nextMove][0].append(counter * 0.2)
+						pheromoneTime = addPhero(distance, vel * s_constant)
+						nUAV[nextMove][1].append((counter * 0.2) + pheromoneTime)
+						nUAV[nextMove][2].append(counter % len(dronesList))
 					else:               # not first move
 						index = path.index(pos)
 
@@ -169,14 +170,14 @@ def droneMove(graph, dronesList):
 						temp[1].remove(temp[1][ind])
 						temp[2].remove(temp[2][ind])
 
-						nUAV[move][0].append(startTime)
-						nUAV[move][1].append(startTime + addPhero(distance, vel * s_constant))
-						nUAV[move][2].append(counter % len(dronesList))
+						nUAV[nextMove][0].append(startTime)
+						nUAV[nextMove][1].append(startTime + addPhero(distance, vel * s_constant))
+						nUAV[nextMove][2].append(counter % len(dronesList))
 
 
 					drone.addEnergy(getEnergy(vel * s_constant, distance))
 					drone.addTime(distance / vel * s_constant)
-					drone.setPosition(move)
+					drone.setPosition(nextMove)
 
 				else:       # can't enter the edge
 					drone.hover(getEnergy(0, 0), distance / vel)
@@ -194,9 +195,9 @@ def droneMove(graph, dronesList):
 					capacity = getAttribute(AttributesCapacity, pos, n)
 					if n not in drone.getPath():
 						vel = getAttribute(AttributesmVelocity, pos, n)
-						if capacity[0] >= len(nUAV[n][2]): s_constant = slower[0]
-						elif capacity[0] < len(nUAV[n][2]) <= capacity[1]: s_constant = slower[1]
-						elif capacity[1] < len(nUAV[n][2]) <= capacity[2]: s_constant = slower[2]
+						if capacity[0] >= len(nUAV[n][2]): s_constant = SLOWER[0]
+						elif capacity[0] < len(nUAV[n][2]) <= capacity[1]: s_constant = SLOWER[1]
+						elif capacity[1] < len(nUAV[n][2]) <= capacity[2]: s_constant = SLOWER[2]
 						else: s_constant = 0
 
 						distance = getAttribute(AttributesDistance, pos, n)
@@ -252,9 +253,9 @@ def droneMove(graph, dronesList):
 					capacity = getAttribute(AttributesCapacity, pos, n)
 					if n not in drone.getPath():
 						vel = getAttribute(AttributesmVelocity, pos, n)
-						if capacity[0] >= len(nUAV[n][2]): s_constant = slower[0]
-						elif capacity[0] < len(nUAV[n][2]) <= capacity[1]: s_constant = slower[1]
-						elif capacity[1] < len(nUAV[n][2]) <= capacity[2]: s_constant = slower[2]
+						if capacity[0] >= len(nUAV[n][2]): s_constant = SLOWER[0]
+						elif capacity[0] < len(nUAV[n][2]) <= capacity[1]: s_constant = SLOWER[1]
+						elif capacity[1] < len(nUAV[n][2]) <= capacity[2]: s_constant = SLOWER[2]
 						else: s_constant = 0
 
 						distance = getAttribute(AttributesDistance, pos, n)
@@ -363,21 +364,31 @@ def addPhero(distance, speed):
 	evap = 1.1 * distance / speed
 	return evap
 
+# Energy function -> will change
+# When the layer is changed? -> basic consuming energy is getting higher?
+# W = 10, S = 0.827, N = 6, Cd = 0.96, p = 1.0926
+def getEnergy(speed, distance):
+	T = math.sqrt(100 + (0.433718 * speed ** 2))
+	power = T / ((1873545 * math.pi) * math.sqrt(speed ** 2 + 10 ** 2)) + 0.433718 * speed ** 2 * distance
+	return power
+
+
 # speed Layer1 = (0,15], Layer2 = (15,20], Layer3 = (20,25] roughly
 # page8 of Practical Endurance Estimation Minimizing Energy Consumption of Multirotor Unmanned Aerial Vehicles
 # node_information: [(startime, endtime), evaporationtime]
 # edge_information: capacity, distance, optimalvelocity(max),
 def setLayerAttributes(graph):
-	# Add weights (maximum capacity, distance, time, energy) for intralayer network
+	# Add weights (maximum capacity, distance, time, energy) for layer network
 	for l in range(graph.get_number_of_layers()):
 		maxVelocities	= graph.get_intra_layer_edges_of_layer(layer=l)
 		capacities 		= graph.get_intra_layer_edges_of_layer(layer=l)
 		distances		= graph.get_intra_layer_edges_of_layer(layer=l)
 		linkTravelTimes 				= graph.get_intra_layer_edges_of_layer(layer=l)
 		linkTravelEnergyConsumptions 	= graph.get_intra_layer_edges_of_layer(layer=l)
-
-		_capacity = list(np.random.randint(low=2, high=4, size=len(maxVelocities)))
-		_distance = list(np.random.randint(low=2, high=30, size=len(maxVelocities)))
+		
+		numberOfEdges = len(maxVelocities)
+		_capacity = list(np.random.randint(low=2, high=5, size=numberOfEdges))
+		_distance = list(np.random.randint(low=5, high=30, size=numberOfEdges))
 
 		for i, e in enumerate(maxVelocities):
 			maxVelocities[i] 	= (e[0], e[1], MAX_VELOCITY[l])
@@ -386,8 +397,8 @@ def setLayerAttributes(graph):
 			linkTravelTimes[i] 				= (e[0], e[1], _distance[i] / MAX_VELOCITY[l])
 			linkTravelEnergyConsumptions[i] = (e[0], e[1], getEnergy(MAX_VELOCITY[l], _distance[i]))
 			
-			graph.nodes[e[0]][e[1]] = [[], [], []]  # TimeStamp, evapo, #uav
-			graph.nodes[e[1]][e[0]] = [[], [], []]  # TimeStamp, evapo, #uav
+			graph.nodes[e[0]][e[1]] = [[], [], []] # [[]]  # TimeStamp, evapoTime
+			graph.nodes[e[1]][e[0]] = [[], [], []]  # TimeStamp, evapoTime
 
 
 		graph.add_weighted_edges_from(maxVelocities,				'maxVelocity')
@@ -396,7 +407,7 @@ def setLayerAttributes(graph):
 		graph.add_weighted_edges_from(linkTravelTimes, 				'time')
 		graph.add_weighted_edges_from(linkTravelEnergyConsumptions, 'energy')
 
-	# Add weights (time energy and maximum capacity) for interlayer network
+	# Add weights (maximum capacity, distance, time, energy) for interlayer network
 	interLink = graph.get_inter_layer_edges()
 
 	for l in range(graph.get_number_of_layers() - 1):
@@ -429,33 +440,19 @@ def setLayerAttributes(graph):
 			interestedLink[i] = (e[0], e[1], MAX_VELOCITY[l])
 			interestedLink2[i] = (e[0], e[1], [_capacity[i], _capacity[i]*4/3, _capacity[i]*5/3])
 			interestedLink3[i] = (e[0], e[1], _distance[i])
-			# interestedLink4[i] = (e[0], e[1], 0)
 			interestedLink4[i] = (e[0], e[1], _distance[i] / MAX_VELOCITY[l])
 			interestedLink5[i] = (e[0], e[1], getEnergy(MAX_VELOCITY[l], _distance[i]))
 
 			graph.nodes[e[0]][e[1]] = [[], [], []]  # TimeStamp, evapo, #uav
 			graph.nodes[e[1]][e[0]] = [[], [], []]  # TimeStamp, evapo, #uav
-		graph.add_weighted_edges_from(interestedLink, 'maxVelocity')
-		graph.add_weighted_edges_from(interestedLink2, 'capacity')
-		graph.add_weighted_edges_from(interestedLink3, 'distance')
-		graph.add_weighted_edges_from(interestedLink4, 'time')
-		graph.add_weighted_edges_from(interestedLink4, 'energy')
 
-	# initialize node information
+		graph.add_weighted_edges_from(interestedLink, 	'maxVelocity')
+		graph.add_weighted_edges_from(interestedLink2, 	'capacity')
+		graph.add_weighted_edges_from(interestedLink3, 	'distance')
+		graph.add_weighted_edges_from(interestedLink4, 	'time')
+		graph.add_weighted_edges_from(interestedLink4, 	'energy')
 
 	return graph
-
-
-# Energy function -> will change
-# When the layer is changed? -> basic consuming energy is getting higher?
-def getEnergy(speed, distance):
-	# W = 10, S = 0.827, N = 6, Cd = 0.96, p = 1.0926
-	# if (pos, next) in listofdis:
-	#     dis = listofdis[pos, next]
-	T = math.sqrt(100 + (0.433718 * speed ** 2))
-	power = T / ((1873545 * math.pi) * math.sqrt(speed ** 2 + 10 ** 2)) + 0.433718 * speed ** 2 * distance
-
-	return power
 
 
 ####################################################################################
@@ -507,20 +504,18 @@ if __name__ == '__main__':
 	#   Traffic Generation and Testing Motion Rules
 	####################################################################################
 
-	drones = generateDrone(mg, NUMBER_OF_DRONS, 0, 8)
+	drones = generateDrone(mg, NUMBER_OF_DRONS, START_POSITION, DESTINATION_POSITION)
 
 	print('***********************  PATH  ***********************')
-
 	T = nx.shortest_path(mg, source=0, target=8, weight='time')
 	print('Dijkstra_Time', T)
-
 	E = nx.shortest_path(mg, source=0, target=8, weight='energy')
 	print('Dijkstra_Energy', E)
 
 	print('**********************  MOTION  **********************')
-
+	
 	droneMove(mg, drones)
-
+	
 	counter = 0
 	for drone in drones:
 		counter += 1
@@ -558,27 +553,23 @@ if __name__ == '__main__':
 	print('Total Layer changes', layerCounter)
 	print('Total Queuing/Hovering Events', hoverCount)
 
-
-
-
 	####################################################################################
 	#   Plotting Graphs
 	####################################################################################
-	print(mg.node)
-	print('***********************  PLOT  ***********************')
-
+	# print(mg.node)
+	# print('***********************  PLOT  ***********************')
 	# Plotting the weighted graph
-	fig = plt.figure(figsize=(10, 5))
-	ax1 = fig.add_subplot(121)
-	ax1.imshow(mx.adjacency_matrix(mg, weight='distance').todense(),
-			   origin='upper', interpolation='nearest', cmap=plt.cm.jet_r)
-	ax1.set_title('supra adjacency matrix')
+	# fig = plt.figure(figsize=(10, 5))
+	# ax1 = fig.add_subplot(121)
+	# ax1.imshow(mx.adjacency_matrix(mg, weight='distance').todense(),
+	# 		   origin='upper', interpolation='nearest', cmap=plt.cm.jet_r)
+	# ax1.set_title('supra adjacency matrix')
 
-	ax2 = fig.add_subplot(122, projection='3d')
-	ax2.axis('on')
-	ax2.set_title('edge colored network')
-	pos = mx.get_position3D(mg)
-	mx.Figure3D(mg, pos=pos, ax=ax2, node_size=50, with_labels=True,
-				edge_color=[mg[a][b]['distance'] for a, b in mg.edges()], edge_cmap=plt.cm.jet_r)
-	plt.show()
-	print('***********************  END  ***********************')
+	# ax2 = fig.add_subplot(122, projection='3d')
+	# ax2.axis('on')
+	# ax2.set_title('edge colored network')
+	# pos = mx.get_position3D(mg)
+	# mx.Figure3D(mg, pos=pos, ax=ax2, node_size=50, with_labels=True,
+	# 			edge_color=[mg[a][b]['distance'] for a, b in mg.edges()], edge_cmap=plt.cm.jet_r)
+	# plt.show()
+	# print('***********************  END  ***********************')
