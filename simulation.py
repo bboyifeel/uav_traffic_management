@@ -3,16 +3,22 @@ import networkx as nx
 import multinetx as mx
 import matplotlib.pyplot as plt
 import math
+from datetime import datetime
+import time
+import copy
+
 
 # N number of nodes for each layer
 N					= 10
-NUMBER_OF_DRONS 	= 3
+NUMBER_OF_DRONS 	= 10
 # MAX_VELOCITY 		= [15, 25, 42]   	km/h 
 MAX_VELOCITY		= [ 4.2, 7, 11.7 ] # m/s
 START_POSITION			= 0
 DESTINATION_POSITION	= 8
 SLOWER 					= [1, 0.8, 0.6]  # slowering constant
 
+RULE_LOW			= 3
+RULE_HIGH			= 4
 
 class UAV(object):
 	# rule:
@@ -82,6 +88,29 @@ class UAV(object):
 		return self.qCount
 
 
+class Register(object):
+	def __init__(self, phlist):
+		self.phlist = phlist
+
+	def objectsInTheLink(self):
+		counter = 0
+		timestamp = datetime.timestamp(datetime.now())
+		print("I'm checking how many is in the link and now is " + str(timestamp))
+		toRemove = []
+		for i in self.phlist:
+			print(i)
+			if timestamp > i:
+				toRemove.append(i)
+			else:
+				counter = counter + 1
+		
+		for i in toRemove:
+			self.phlist.remove(i)
+
+		print(str(counter) + " UAVs are in the link")
+		return counter
+
+
 ####################################################################################
 #   Functions
 ####################################################################################
@@ -93,7 +122,7 @@ def generateDrone(graph, number, position, destination):
 	shortPathT = nx.shortest_path(graph, source=position, target=destination, weight='time')
 	shortPathE = nx.shortest_path(graph, source=position, target=destination, weight='energy')
 	for n in range(number):  # check
-		rule = np.random.randint(low=1, high=4, size=1)[0]
+		rule = np.random.randint(low=RULE_LOW, high=RULE_HIGH, size=1)[0]
 		if rule == 1:
 			d = UAV(position, destination, shortPathT, 1)
 		elif rule == 2:
@@ -108,9 +137,7 @@ def generateDrone(graph, number, position, destination):
 # Function that defines the movement of the drones given list of instances of the UAV class
 # all drones move at the same time (with this code)
 def droneMove(graph, dronesList):
-	counter = 0
 	while True:
-
 		# Loop through the list of drones and for every drone reached destination
 		flag = True
 		for drone in dronesList:
@@ -121,182 +148,122 @@ def droneMove(graph, dronesList):
 		if flag:
 			break
 
-		AttributesCapacity = nx.get_edge_attributes(graph, 'capacity')  # critical capacity
-		AttributesDistance = nx.get_edge_attributes(graph, 'distance')  # edge distance
-
 		for drone in dronesList:
-			counter += 1			
+			AttributesmVelocity	= nx.get_edge_attributes(graph, 'maxVelocity')
+			AttributesCapacity	= nx.get_edge_attributes(graph, 'capacity')
+			AttributesDistance	= nx.get_edge_attributes(graph, 'distance')
+			AttributesTime		= nx.get_edge_attributes(graph, 'time')
+			AttributesEnergy	= nx.get_edge_attributes(graph, 'energy')
+	
 			pos = drone.getPosition()  # present position
-			if (pos == drone.getDestination()):
+			destination = drone.getDestination()
+			if (pos == destination):
 				continue
 
 			path = drone.getPath()  # Way drone moved
 			rule = drone.getRule()  # Drone rule
 			
 			shortPath = drone.getShortPath()  # Shortest Path to reach the destination			
-			nUAV = graph.nodes[pos]  	# number of UAV [starttime, evapo, number]
+			index = shortPath.index(pos)
+			nextMove = shortPath[index + 1]
+			register = Register(graph.nodes[pos][nextMove])
+			nUAVs = register.objectsInTheLink()
 			
-			# it should only hover, it can't never change its own way.
-			if rule == 1 or rule == 2:
-				index = shortPath.index(pos)
-				nextMove = shortPath[index + 1]
+			distance = getAttribute(AttributesDistance, pos, nextMove)
+			capacity = getAttribute(AttributesCapacity, pos, nextMove)  # capacity == critical nUAVs
+			vel = getAttribute(AttributesmVelocity, pos, nextMove)
+			if nUAVs <= capacity[0]: s_constant = SLOWER[0]  # drones fly with mVelocity
+			elif capacity[0] < nUAVs <= capacity[1]: s_constant = SLOWER[1]
+			elif capacity[1] < nUAVs <= capacity[2]: s_constant = SLOWER[2]
+			else: s_constant = 0
 
-				distance = getAttribute(AttributesDistance, pos, nextMove)
-				capacity = getAttribute(AttributesCapacity, pos, nextMove)  # capacity == critical nUAVs
+			if s_constant != 0:     # can enter the edge
+				now = datetime.now()
+				startTimeStamp = datetime.timestamp(now)
+				pheromoneTime = addPhero(distance, vel * s_constant)
+				finishTimeStamp = startTimeStamp + pheromoneTime
+				
+				register.phlist.append(finishTimeStamp)
 
-				if len(nUAV[nextMove][2]) <= capacity[0]: s_constant = SLOWER[0]  # drones fly with mVelocity
-				elif capacity[0] < len(nUAV[nextMove][2]) <= capacity[1]: s_constant = SLOWER[1]
-				elif capacity[1] < len(nUAV[nextMove][2]) <= capacity[2]: s_constant = SLOWER[2]
-				else: s_constant = 0
-
-				vel = getAttribute(AttributesmVelocity, pos, nextMove)
-
-				if s_constant != 0:     # can enter the edge
-					if len(path) < 2:   # first move
-						nUAV[nextMove][0].append(counter * 0.2)
-						pheromoneTime = addPhero(distance, vel * s_constant)
-						nUAV[nextMove][1].append((counter * 0.2) + pheromoneTime)
-						nUAV[nextMove][2].append(counter % len(dronesList))
-					else:               # not first move
-						index = path.index(pos)
-
-						temp = graph.nodes[path[index - 1]][pos]
-						ind = temp[2].index(counter % len(dronesList))
-
-						startTime = temp[1][ind]
-
-
-						temp[0].remove(temp[0][ind])
-						temp[1].remove(temp[1][ind])
-						temp[2].remove(temp[2][ind])
-
-						nUAV[nextMove][0].append(startTime)
-						nUAV[nextMove][1].append(startTime + addPhero(distance, vel * s_constant))
-						nUAV[nextMove][2].append(counter % len(dronesList))
-
-
-					drone.addEnergy(getEnergy(vel * s_constant, distance))
-					drone.addTime(distance / vel * s_constant)
-					drone.setPosition(nextMove)
-
-				else:       # can't enter the edge
+				drone.addEnergy(getEnergy(vel * s_constant, distance))
+				drone.addTime(distance / vel * s_constant)
+				drone.setPosition(nextMove)
+			else:       			# can't enter the edge
+				# it should only hover, it can't never change its own way.
+				if rule == 1 or rule == 2:
 					drone.hover(getEnergy(0, 0), distance / vel)
-
-
-			#######################################################################################
-			#   Rule 3 is to switch to energy
-			#######################################################################################
-			if drone.getRule() == 3:
-				Previous = 9999999999
-				nextBestMove = -1
-				listNeighbors = list(graph.neighbors(pos))
-				for n in listNeighbors:
-					# when they moved, always calculate
-					capacity = getAttribute(AttributesCapacity, pos, n)
-					if n not in drone.getPath():
-						vel = getAttribute(AttributesmVelocity, pos, n)
-						if capacity[0] >= len(nUAV[n][2]): s_constant = SLOWER[0]
-						elif capacity[0] < len(nUAV[n][2]) <= capacity[1]: s_constant = SLOWER[1]
-						elif capacity[1] < len(nUAV[n][2]) <= capacity[2]: s_constant = SLOWER[2]
-						else: s_constant = 0
-
-						distance = getAttribute(AttributesDistance, pos, n)
-
-						if getEnergy(vel * s_constant, distance) < Previous:
-							nextBestMove = n
-							Previous = getEnergy(vel * s_constant, distance)
-
-				# if nextBestMove == -1:
-				if s_constant == 0:
-					# newShortPath = nx.shortest_path(graph, source=pos, target=drone.getDestination(), weight='energy')
-					# drone.setNewPath(newShortPath)
-					# drone.setRule(4)
-					drone.hover(getEnergy(0, 0), distance / vel)
-					break
-
 				else:
-					if len(path) < 2:
-						nUAV[nextBestMove][0].append(counter * 0.2)
-						nUAV[nextBestMove][1].append((counter * 0.2) + addPhero(distance, vel * s_constant))
-						nUAV[nextBestMove][2].append(counter % len(dronesList))
-
+					# generate random number between 0 and 10
+					# if number is greater or eq to 5 then hover
+					# otherwise recalculate best new path 
+					dice = np.random.randint(low=0, high=10)
+					if dice >=5:
+						drone.hover(getEnergy(0, 0), distance / vel)
 					else:
-						index = path.index(pos)
-						temp = graph.nodes[path[index - 1]][pos]
-						ind = temp[2].index(counter % len(dronesList))
+						# loop through neighbours
+						# and update time and energy attributes to all neighbours
+						listNeighbors = list(graph.neighbors(pos))
+						oldTime = {}
+						oldEnergy = {}
+						for n in listNeighbors:
+							capacity 	= getAttribute(AttributesCapacity, pos, n)
+							vel 		= getAttribute(AttributesmVelocity, pos, n)
+							distance 	= getAttribute(AttributesDistance, pos, n)
 
-						startTime = temp[1][ind]
+							oldTime[n]		= getAttribute(AttributesTime, pos, n)
+							oldEnergy[n] 	= getAttribute(AttributesEnergy, pos, n)
 
-						temp[0].remove(temp[0][ind])
-						temp[1].remove(temp[1][ind])
-						temp[2].remove(temp[2][ind])
+							register 	= Register(graph.nodes[pos][n])
+							nUAVs 		= register.objectsInTheLink()
 
-						# Update Capacities of edges of graph
-						nUAV[nextBestMove][0].append(startTime)
-						nUAV[nextBestMove][1].append(startTime + addPhero(distance, vel * s_constant))
-						nUAV[nextBestMove][2].append(counter % len(dronesList))
-						print(counter, nUAV)
+							if capacity[0] >= nUAVs: s_constant = SLOWER[0]
+							elif capacity[0] < nUAVs <= capacity[1]: s_constant = SLOWER[1]
+							elif capacity[1] < nUAVs <= capacity[2]: s_constant = SLOWER[2]
+							else: s_constant = 0.0000000001 # to avoid exception check 
+							
+							linkTravelTime = distance / vel * s_constant
+							linkTravelEnergy = getEnergy(vel * s_constant, distance)							
+							setAttribute(AttributesTime, pos, n, linkTravelTime)
+							setAttribute(AttributesEnergy, pos, n, linkTravelEnergy)
 
-					drone.addEnergy(getEnergy((vel * s_constant), distance))
-					drone.addTime(distance / (vel * s_constant))
-					drone.setPosition(nextBestMove)
+						# find a new shortest_path and update drone with it
+						shortPath = nx.shortest_path(graph, source=pos, target=destination, weight='time')
+						if rule == 4:
+							shortPath = nx.shortest_path(graph, source=pos, target=destination, weight='energy')
+						drone.setNewPath(shortPath)
+						
+						# change time and energy back, so prev changes would go unnoticed for other drones
+						for n in listNeighbors:
+							setAttribute(AttributesTime, pos, n, oldTime[n])
+							setAttribute(AttributesEnergy, pos, n, oldEnergy[n])
 
-			#######################################################################################
-			#   Rule 4 is to switch to time
-			#######################################################################################
-			if drone.getRule() == 4:
-				Previous = 9999999999
-				nextBestMove = -1
-				listNeighbors = list(graph.neighbors(pos))
-				for n in listNeighbors:
+						fromPos = shortPath[0]
+						toPos = shortPath[1]
+						register = Register(graph.nodes[fromPos][toPos])
+						nUAVs = register.objectsInTheLink()
 
-					capacity = getAttribute(AttributesCapacity, pos, n)
-					if n not in drone.getPath():
-						vel = getAttribute(AttributesmVelocity, pos, n)
-						if capacity[0] >= len(nUAV[n][2]): s_constant = SLOWER[0]
-						elif capacity[0] < len(nUAV[n][2]) <= capacity[1]: s_constant = SLOWER[1]
-						elif capacity[1] < len(nUAV[n][2]) <= capacity[2]: s_constant = SLOWER[2]
-						else: s_constant = 0
+						# take next step and find slowering constant			
+						distance 	= getAttribute(AttributesDistance, fromPos, toPos)
+						capacity 	= getAttribute(AttributesCapacity, fromPos, toPos)  		# capacity == critical nUAVs
+						vel 		= getAttribute(AttributesmVelocity, fromPos, toPos)
+						if 		nUAVs <= capacity[0]: 					s_constant = SLOWER[0] 	# drones fly with mVelocity
+						elif 	capacity[0] < nUAVs <= capacity[1]: 	s_constant = SLOWER[1]
+						elif 	capacity[1] < nUAVs <= capacity[2]: 	s_constant = SLOWER[2]
+						else: 											s_constant = 0
 
-						distance = getAttribute(AttributesDistance, pos, n)
+						if s_constant != 0:
+							now 			= datetime.now()
+							startTimeStamp 	= datetime.timestamp(now)
+							pheromoneTime 	= addPhero(distance, vel * s_constant)
+							finishTimeStamp	= startTimeStamp + pheromoneTime
 
-						if distance/vel*s_constant < Previous:
-							nextBestMove = n
-							Previous = distance/vel*s_constant
+							register.phlist.append(finishTimeStamp)
 
-				# if nextBestMove == -1:
-				if s_constant == 0:
-					# newShortPath = nx.shortest_path(graph, source=pos, target=drone.getDestination(), weight='time')
-					# drone.setNewPath(newShortPath)
-					# drone.setRule(4)
-					drone.hover(getEnergy(0, 0), distance / vel)
-					break
-
-				else:
-					if len(path) < 2:
-						nUAV[nextBestMove][0].append(counter * 0.2)
-						nUAV[nextBestMove][1].append((counter * 0.2) + addPhero(distance, vel * s_constant))
-						nUAV[nextBestMove][2].append(counter % len(dronesList))
-
-					else:
-						index = path.index(pos)
-						temp = graph.nodes[path[index - 1]][pos]
-						ind = temp[2].index(counter % len(dronesList))
-
-						startTime = temp[1][ind]
-
-						temp[0].remove(temp[0][ind])
-						temp[1].remove(temp[1][ind])
-						temp[2].remove(temp[2][ind])
-
-						# Update Capacities of edges of graph
-						nUAV[nextBestMove][0].append(startTime)
-						nUAV[nextBestMove][1].append(startTime + addPhero(distance, vel * s_constant))
-						nUAV[nextBestMove][2].append(counter % len(dronesList))
-
-					drone.addEnergy(getEnergy((vel * s_constant), distance))
-					drone.addTime(distance / (vel * s_constant))
-					drone.setPosition(nextBestMove)
+							drone.addEnergy(getEnergy(vel * s_constant, distance))
+							drone.addTime(distance / vel * s_constant)
+							drone.setPosition(toPos)
+						else:
+							drone.hover(getEnergy(0, 0), distance / vel)
 
 # Switch layer when the velocity is higher than
 # should be changed
@@ -322,6 +289,12 @@ def getAttribute(listOfweights, source, position):
 		attribute = listOfweights[position, source]
 	return attribute
 
+# weights manipulation functions
+def setAttribute(listOfweights, source, position, value):
+	if (source, position) in listOfweights:
+		listOfweights[source, position] = value
+	else:
+		listOfweights[position, source] = value
 
 def updateAttribute(listOfweights, source, position, value):
 	Tempattribute = getAttribute(listOfweights, source, position)
@@ -397,8 +370,8 @@ def setLayerAttributes(graph):
 			linkTravelTimes[i] 				= (e[0], e[1], _distance[i] / MAX_VELOCITY[l])
 			linkTravelEnergyConsumptions[i] = (e[0], e[1], getEnergy(MAX_VELOCITY[l], _distance[i]))
 			
-			graph.nodes[e[0]][e[1]] = [[], [], []] # [[]]  # TimeStamp, evapoTime
-			graph.nodes[e[1]][e[0]] = [[], [], []]  # TimeStamp, evapoTime
+			graph.nodes[e[0]][e[1]] = [] 	# evapoTimeEnd
+			graph.nodes[e[1]][e[0]] = [] 	# evapoTimeEnd
 
 
 		graph.add_weighted_edges_from(maxVelocities,				'maxVelocity')
@@ -432,8 +405,8 @@ def setLayerAttributes(graph):
 				interestedLink3.append(e)
 				interestedLink4.append(e)
 				interestedLink5.append(e)
-				graph.nodes[e[0]][e[1]] = [[], [], []]  # TimeStamp, evapo, #uav
-				graph.nodes[e[1]][e[0]] = [[], [], []]  # TimeStamp, evapo, #uav
+				graph.nodes[e[0]][e[1]] = []  # evapoTimeEnd
+				graph.nodes[e[1]][e[0]] = []  # evapoTimeEnd
 				# interestedLink4.append(e)
 
 		for i, e in enumerate(interestedLink):
@@ -443,8 +416,8 @@ def setLayerAttributes(graph):
 			interestedLink4[i] = (e[0], e[1], _distance[i] / MAX_VELOCITY[l])
 			interestedLink5[i] = (e[0], e[1], getEnergy(MAX_VELOCITY[l], _distance[i]))
 
-			graph.nodes[e[0]][e[1]] = [[], [], []]  # TimeStamp, evapo, #uav
-			graph.nodes[e[1]][e[0]] = [[], [], []]  # TimeStamp, evapo, #uav
+			graph.nodes[e[0]][e[1]] = []  # evapoTimeEnd
+			graph.nodes[e[1]][e[0]] = []  # evapoTimeEnd
 
 		graph.add_weighted_edges_from(interestedLink, 	'maxVelocity')
 		graph.add_weighted_edges_from(interestedLink2, 	'capacity')
