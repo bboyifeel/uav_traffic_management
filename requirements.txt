@@ -1,5 +1,5 @@
 decorator==4.3.2
-numpy==1.16.2
+numpy==1.22.0
 scipy==1.2.1
 networkx==2.2
 multinetx==1.0.dev0
